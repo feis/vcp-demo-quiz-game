@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生字雨</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    font-synthesis: none;
+    background: #f4f1ea; color: #222;
+    display: flex; justify-content: center;
+  }
+  #game {
+    width: 100%; max-width: 900px; height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column; padding: 16px; gap: 16px;
+  }
+  #top { font-size: clamp(20px, 3.5vw, 28px); text-align: center; }
+  #field {
+    position: relative; flex: 1; min-height: 240px; overflow: hidden;
+    background: #fff; border: 3px solid #222; border-radius: 16px;
+  }
+  #card {
+    position: absolute; left: 50%; top: 0;
+    width: clamp(160px, 30vw, 240px); margin-left: calc(clamp(160px, 30vw, 240px) / -2);
+    padding: 12px 8px; text-align: center;
+    background: #fff7d6; border: 3px solid #222; border-radius: 12px;
+  }
+  #zhuyin { font-size: clamp(26px, 5vw, 40px); letter-spacing: 2px; }
+  #word { font-size: clamp(30px, 6vw, 48px); }
+  #ground { position: absolute; left: 0; right: 0; bottom: 0; height: 8px; background: #222; }
+  #choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(12px, 3vw, 32px); }
+  #choices button {
+    min-height: 88px; font-size: clamp(40px, 8vw, 64px); font-family: inherit;
+    background: #fff; color: #222; border: 3px solid #222; border-radius: 16px; cursor: pointer;
+    touch-action: manipulation;
+  }
+  #choices button.right { background: #222; color: #fff; }
+  #choices button:disabled { cursor: default; }
+  #result { display: none; position: absolute; inset: 0; align-items: center; justify-content: center;
+    flex-direction: column; gap: 24px; font-size: clamp(28px, 6vw, 48px); background: #fff; }
+  #result.show { display: flex; }
+  #again { font-size: 28px; padding: 12px 32px; font-family: inherit; border: 3px solid #222; border-radius: 12px; background: #fff7d6; }
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="top">第 <span id="num">1</span> 題／<span id="total">5</span>　答對 <span id="score">0</span></div>
+  <div id="field">
+    <div id="card"><div id="zhuyin"></div><div id="word"></div></div>
+    <div id="ground"></div>
+    <div id="result"><div id="resultText"></div><button id="again">再玩一次</button></div>
+  </div>
+  <div id="choices"><button></button><button></button><button></button></div>
+</div>
+<script>
+// 題目：注音、詞（＿是要選的字）、答案。換一批生字就改這裡。
+const QUESTIONS = [
+  { zhuyin: 'ㄑㄧㄥˊ', word: '＿天', answer: '晴' },
+  { zhuyin: 'ㄑㄧㄥ', word: '＿水', answer: '清' },
+  { zhuyin: 'ㄑㄧㄥˇ', word: '＿問', answer: '請' },
+  { zhuyin: 'ㄑㄧㄥˊ', word: '心＿', answer: '情' },
+  { zhuyin: 'ㄑㄧㄥ', word: '＿草', answer: '青' },
+];
+const ALL_CHARS = QUESTIONS.map(q => q.answer);
+
+// 速度：每秒掉「場地高度的幾分之幾」。答對一題乘上 SPEED_UP，最多到 MAX_SPEED。
+const START_SPEED = 0.1;
+const SPEED_UP = 1.25;
+const MAX_SPEED = 0.3;
+function nextSpeed(speed) { return Math.min(speed * SPEED_UP, MAX_SPEED); }
+
+const $ = id => document.getElementById(id);
+const buttons = [...document.querySelectorAll('#choices button')];
+
+// 狀態
+const state = { index: 0, score: 0, y: 0, speed: START_SPEED, paused: false, over: false };
+
+function shuffle(list) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+function showNext() {
+  if (state.index >= QUESTIONS.length) { finish(); return; }
+  const q = QUESTIONS[state.index];
+  $('word').textContent = q.word;
+  $('zhuyin').textContent = q.zhuyin;
+  const others = shuffle(ALL_CHARS.filter(c => c !== q.answer)).slice(0, 2);
+  shuffle([q.answer, ...others]).forEach((c, i) => {
+    buttons[i].textContent = c; buttons[i].className = ''; buttons[i].disabled = false;
+  });
+  $('num').textContent = state.index + 1;
+  state.y = 0; state.paused = false;
+}
+
+function finish() {
+  state.over = true;
+  $('card').style.visibility = 'hidden';
+  buttons.forEach(b => { b.disabled = true; });
+  $('resultText').textContent = `練習結束：${QUESTIONS.length} 題答對 ${state.score} 題`;
+  $('result').classList.add('show');
+}
+
+// 答錯或掉到底：停一秒、把正確的選項標出來，再換下一張
+function miss() {
+  state.paused = true;
+  const q = QUESTIONS[state.index];
+  buttons.forEach(b => { b.disabled = true; if (b.textContent === q.answer) b.className = 'right'; });
+  setTimeout(() => { state.index++; showNext(); }, 1000);
+}
+
+// 事件：點選項
+buttons.forEach(b => b.addEventListener('click', () => {
+  if (state.paused || state.over) return;
+  if (b.textContent === QUESTIONS[state.index].answer) {
+    state.score++;
+    $('score').textContent = state.score;
+    state.speed = nextSpeed(state.speed); // 答對一題只加快一次
+    state.index++;
+    showNext();
+  } else {
+    miss();
+  }
+}));
+
+$('again').addEventListener('click', () => {
+  Object.assign(state, { index: 0, score: 0, speed: START_SPEED, over: false });
+  $('score').textContent = 0;
+  $('card').style.visibility = '';
+  $('result').classList.remove('show');
+  showNext();
+});
+
+// 遊戲迴圈：看經過多久，字卡往下移一點，照新位置重畫
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  if (!state.paused && !state.over) {
+    const field = $('field'), card = $('card');
+    const bottom = field.clientHeight - 8 - card.offsetHeight;
+    state.y += state.speed * field.clientHeight * dt;
+    if (state.y >= bottom) { state.y = bottom; miss(); }
+    card.style.transform = `translateY(${state.y}px)`;
+  }
+  requestAnimationFrame(loop);
+}
+
+// 給自動驗證讀的（不影響遊戲）
+window.wordRain = { state, QUESTIONS, START_SPEED, MAX_SPEED, nextSpeed };
+
+$('total').textContent = QUESTIONS.length;
+showNext();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
